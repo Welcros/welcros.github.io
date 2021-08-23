@@ -104,11 +104,11 @@ We access the IP Address Management OpenNetAdmin as a guest user, looking for th
 
 Here I paused before continuing with OpenNetAdmin to check the other pages that ffuf found but there is nothing interesting, only resources with html templates.
 
-http://10.10.10.171/artwork
+## http://10.10.10.171/artwork
 
 ![](/assets/images/htb-writeup-openadmin/artwork-page.png)
 
-http://10.10.10.171/sierra
+## http://10.10.10.171/sierra
 
 ![](/assets/images/htb-writeup-openadmin/sierra-page.png)
 
