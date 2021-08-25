@@ -15,6 +15,7 @@ tags:
   - opennetadmin
   - db creds
   - gtfobins
+  - brute-force attack
 ---
 
 ![](/assets/images/htb-writeup-openadmin/openadmin_logo.png)
@@ -69,9 +70,8 @@ ________________________________________________
  :: Follow redirects : false
  :: Calibration      : false
  :: Timeout          : 10
- :: Threads          : 200
+ :: Threads          : 40
  :: Matcher          : Response status: 200,204,301,302,307,401,403,405
- :: Filter           : Response words: 3499
 ________________________________________________
 
 music                   [Status: 301, Size: 312, Words: 20, Lines: 10]
