@@ -15,7 +15,6 @@ categories:
 tags:
   - Web
   - SQL
-  - robots.txt
   - Adminer
   - SETENV  
   - Library Hijacking
