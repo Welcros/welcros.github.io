@@ -2,7 +2,7 @@
 layout: single
 title: Bastion - Hack The Box
 excerpt: "We will attack the smb service to clone its content on our attackers machine, we relate a note that is related to a Windows image which we will mount on our system with the qemu utility and then abuse the SYSTEM and SAM configuration files with the samdump2 tool.
-To the previously given hash we will break it with john and we will use that password to connect by SSH to the L4mpje user, once inside we will escalate to the Administrator user relating the SSH service with mRemoteNG, which we will exploit with a public github script."
+To the previously given hash we will break it with john and we will use that password to connect by SSH to the L4mpje user, once inside we will escalate to the Administrator user relating the SSH service with mRemoteNG, which we will exploit with a public github script to gain administrator access."
 date: 2021-09-02
 classes: wide
 header:
@@ -13,12 +13,12 @@ categories:
   - hackthebox
   - infosec
 tags:
-  - Web
-  - File Misconfiguration
-  - nostromo
-  - BurpSuite
-  - GTFOBins
-  - 
+  - Windows
+  - Smb
+  - Mount vhd
+  - SYSTEM SAM files
+  - samdump2
+  - mRemoteNG
 ---
 
 # Description
@@ -330,7 +330,7 @@ bastion\l4mpje
 
 l4mpje@BASTION C:\Users\L4mpje>
 ```
-
+<br>
 # Privilege Escalation
 
 ## L4mpje to Administrator
